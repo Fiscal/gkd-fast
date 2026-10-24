@@ -1,0 +1,109 @@
+name: Build GKD Fast APK
+
+# 手动触发：Actions → Build GKD Fast APK → Run workflow
+on:
+  workflow_dispatch:
+    inputs:
+      version_code:
+        description: 'versionCode（必须大于手机里已安装的版本，当前官方是 92）'
+        required: true
+        default: '93'
+      version_name:
+        description: 'versionName（显示用）'
+        required: true
+        default: '1.12.1-fast'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # 1) 本仓库（只需要两个文件：这个 workflow + apply_fast_skip.py）
+      - name: Checkout build repo
+        uses: actions/checkout@v6
+
+      # 2) 拉取 GKD v1.12.1 源码
+      - name: Checkout GKD v1.12.1
+        uses: actions/checkout@v6
+        with:
+          repository: gkd-kit/gkd
+          ref: v1.12.1
+          path: gkd-src
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: zulu
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      # 3) 抬版本号，保证能覆盖安装你手机上的 92
+      - name: Bump version
+        run: |
+          set -e
+          cd gkd-src
+          sed -i "s/versionCode = 92/versionCode = ${{ inputs.version_code }}/" app/build.gradle.kts
+          sed -i "s/versionName = \"1.12.1\"/versionName = \"${{ inputs.version_name }}\"/" app/build.gradle.kts
+          grep -nE 'versionCode|versionName' app/build.gradle.kts | head -n 5
+
+      # 4) 打上 6 个等待值的补丁（精确匹配，失败会中止）
+      - name: Apply fast-skip timing patch
+        run: python3 apply_fast_skip.py gkd-src/app/src/main/kotlin/li/songe/gkd/a11y/A11yRuleEngine.kt
+
+      # 5) 签名：有 secret 就用你的固定 keystore，没有就临时生成一把并上传
+      - name: Prepare signing key
+        id: key
+        env:
+          KS_B64: ${{ secrets.GKD_STORE_FILE_BASE64 }}
+          KS_PW: ${{ secrets.GKD_STORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.GKD_KEY_ALIAS }}
+          KS_KEY_PW: ${{ secrets.GKD_KEY_PASSWORD }}
+        run: |
+          set -e
+          if [ -n "$KS_B64" ]; then
+            printf '%s' "$KS_B64" | base64 --decode > gkd.jks
+            printf 'GKD_STORE_PASSWORD=%s\n' "$KS_PW" >> gkd-src/gradle.properties
+            printf 'GKD_KEY_ALIAS=%s\n' "$KS_ALIAS" >> gkd-src/gradle.properties
+            printf 'GKD_KEY_PASSWORD=%s\n' "$KS_KEY_PW" >> gkd-src/gradle.properties
+            echo "generated=false" >> "$GITHUB_OUTPUT"
+          else
+            PW="gkd-fast-2026"
+            keytool -genkeypair -keystore gkd.jks -alias gkd -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$PW" -keypass "$PW" -dname "CN=GKD Fast, O=Self, C=CN"
+            echo "$PW" > keystore-password.txt
+            printf 'GKD_STORE_PASSWORD=%s\n' "$PW" >> gkd-src/gradle.properties
+            printf 'GKD_KEY_ALIAS=gkd\n' >> gkd-src/gradle.properties
+            printf 'GKD_KEY_PASSWORD=%s\n' "$PW" >> gkd-src/gradle.properties
+            echo "generated=true" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "GKD_STORE_FILE=${{ github.workspace }}/gkd.jks"
+            echo "GKD_RENAME_APK_FLAG=1"
+          } >> gkd-src/gradle.properties
+
+      # 6) 构建
+      - name: Build release APK
+        run: |
+          set -e
+          cd gkd-src
+          chmod +x gradlew
+          ./gradlew app:assembleGkdRelease --no-daemon
+
+      # 7) 上传 APK（以及首次生成的 keystore，务必保存好）
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: gkd-fast
+          path: gkd-src/app/build/outputs/apk/gkd/release/*.apk
+
+      - name: Upload generated keystore (first run only)
+        if: steps.key.outputs.generated == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: gkd-fast-keystore
+          path: |
+            gkd.jks
+            keystore-password.txt
