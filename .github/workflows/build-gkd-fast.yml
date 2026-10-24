@@ -1,11 +1,12 @@
 name: Build GKD Fast APK
 
-# 手动触发：Actions → Build GKD Fast APK → Run workflow
+# 单文件版：补丁脚本已内嵌，仓库里只需要这一个文件
+# 路径必须是 .github/workflows/build-gkd-fast.yml
 on:
   workflow_dispatch:
     inputs:
       version_code:
-        description: 'versionCode（必须大于手机里已安装的版本，当前官方是 92）'
+        description: 'versionCode（必须大于手机已安装的版本，官方 1.12.1 是 92）'
         required: true
         default: '93'
       version_name:
@@ -20,11 +21,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # 1) 本仓库（只需要两个文件：这个 workflow + apply_fast_skip.py）
-      - name: Checkout build repo
-        uses: actions/checkout@v6
+      - name: Show environment
+        run: |
+          uname -a
+          java -version || true
+          python3 --version || true
 
-      # 2) 拉取 GKD v1.12.1 源码
       - name: Checkout GKD v1.12.1
         uses: actions/checkout@v6
         with:
@@ -38,22 +40,93 @@ jobs:
           distribution: zulu
           java-version: '21'
 
-      - uses: gradle/actions/setup-gradle@v5
-
-      # 3) 抬版本号，保证能覆盖安装你手机上的 92
       - name: Bump version
         run: |
           set -e
           cd gkd-src
+          ls -l app/build.gradle.kts
           sed -i "s/versionCode = 92/versionCode = ${{ inputs.version_code }}/" app/build.gradle.kts
           sed -i "s/versionName = \"1.12.1\"/versionName = \"${{ inputs.version_name }}\"/" app/build.gradle.kts
-          grep -nE 'versionCode|versionName' app/build.gradle.kts | head -n 5
+          grep -n 'versionCode\|versionName' app/build.gradle.kts || true
 
-      # 4) 打上 6 个等待值的补丁（精确匹配，失败会中止）
       - name: Apply fast-skip timing patch
-        run: python3 apply_fast_skip.py gkd-src/app/src/main/kotlin/li/songe/gkd/a11y/A11yRuleEngine.kt
+        run: |
+          set -e
+          base64 -d > /tmp/apply_fast_skip.py <<'B64'
+          IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwojIC0qLSBjb2Rpbmc6IHV0Zi04IC0qLQoiIiJHS0QgMS4x
+          Mi4xICJmYXN0IHNraXAiIHRpbWluZyB0d2Vha3MuCgpUYXJnZXQ6IGFwcC9zcmMvbWFpbi9rb3Rs
+          aW4vbGkvc29uZ2UvZ2tkL2ExMXkvQTExeVJ1bGVFbmdpbmUua3QKQ29tbWl0OiA1YTAwZjg0NDk4
+          OTQ3MTQ1OGU0Y2Y0NjAxYWNiM2Y0NzEwNDM4ZjlhICh2MS4xMi4xKQoKVXNhZ2UgKGZyb20gdGhl
+          IEdLRCByZXBvIHJvb3QpOgogICAgcHl0aG9uIGFwcGx5X2Zhc3Rfc2tpcC5weSBhcHAvc3JjL21h
+          aW4va290bGluL2xpL3NvbmdlL2drZC9hMTF5L0ExMXlSdWxlRW5naW5lLmt0CgpFdmVyeSBlZGl0
+          IGlzIGV4YWN0LW1hdGNoIGFuZCBtdXN0IG9jY3VyIGV4YWN0bHkgb25jZTsgdGhlIHNjcmlwdCBh
+          Ym9ydHMKd2l0aG91dCB3cml0aW5nIGFueXRoaW5nIGlmIHRoZSBzb3VyY2UgZG9lcyBub3QgbWF0
+          Y2ggZXhhY3RseSAoZS5nLiBhZnRlcgp5b3UgdXBncmFkZSBHS0QpLiBBIC5iYWsgY29weSBpcyBj
+          cmVhdGVkIG5leHQgdG8gdGhlIGZpbGUuCiIiIgoKaW1wb3J0IHN5cwppbXBvcnQgc2h1dGlsCgoj
+          IChkZXNjcmlwdGlvbiwgb2xkLCBuZXcpCkVESVRTID0gWwogICAgKAogICAgICAgICJyb290LW5v
+          ZGUgZmFsbGJhY2sgdGltZW91dDogNTAwbXMgLT4gMTUwbXMiLAogICAgICAgICIiIiAgICAgICAg
+          ICAgIHNjb3BlLmxhdW5jaChEaXNwYXRjaGVycy5JTykgewogICAgICAgICAgICAgICAgZGVsYXko
+          NTAwTCkKICAgICAgICAgICAgICAgIGlmIChzLmlzQWN0aXZlKSB7IiIiLAogICAgICAgICIiIiAg
+          ICAgICAgICAgIHNjb3BlLmxhdW5jaChEaXNwYXRjaGVycy5JTykgewogICAgICAgICAgICAgICAg
+          ZGVsYXkoMTUwTCkKICAgICAgICAgICAgICAgIGlmIChzLmlzQWN0aXZlKSB7IiIiLAogICAgKSwK
+          ICAgICgKICAgICAgICAicmV0cnkgYWZ0ZXIgYW4gZW1wdHkgcXVlcnk6IDMwMG1zIC0+IDUwbXMg
+          KDIgc2l0ZXMpIiwKICAgICAgICAiIiIgICAgICAgIGlmICh0IC0gbGFzdFRyaWdnZXJUaW1lIDwg
+          MzAwMEwgfHwgdCAtIGFwcENoYW5nZVRpbWUgPCAzMDAwTCkgewogICAgICAgICAgICBzY29wZS5s
+          YXVuY2goYWN0aW9uRGlzcGF0Y2hlcikgewogICAgICAgICAgICAgICAgZGVsYXkoMzAwKQogICAg
+          ICAgICAgICAgICAgc3RhcnRRdWVyeUpvYigpCiAgICAgICAgICAgIH0KICAgICAgICB9IGVsc2Ug
+          aWYgKGFjdGl2aXR5UnVsZUZsb3cudmFsdWUuaGFzRmVhdHVyZUFjdGlvbikgewogICAgICAgICAg
+          ICBzY29wZS5sYXVuY2goYWN0aW9uRGlzcGF0Y2hlcikgewogICAgICAgICAgICAgICAgZGVsYXko
+          MzAwKQogICAgICAgICAgICAgICAgc3RhcnRRdWVyeUpvYihieUZvcmNlZCA9IHRydWUpCiAgICAg
+          ICAgICAgIH0KICAgICAgICB9IiIiLAogICAgICAgICIiIiAgICAgICAgaWYgKHQgLSBsYXN0VHJp
+          Z2dlclRpbWUgPCAzMDAwTCB8fCB0IC0gYXBwQ2hhbmdlVGltZSA8IDMwMDBMKSB7CiAgICAgICAg
+          ICAgIHNjb3BlLmxhdW5jaChhY3Rpb25EaXNwYXRjaGVyKSB7CiAgICAgICAgICAgICAgICBkZWxh
+          eSg1MCkKICAgICAgICAgICAgICAgIHN0YXJ0UXVlcnlKb2IoKQogICAgICAgICAgICB9CiAgICAg
+          ICAgfSBlbHNlIGlmIChhY3Rpdml0eVJ1bGVGbG93LnZhbHVlLmhhc0ZlYXR1cmVBY3Rpb24pIHsK
+          ICAgICAgICAgICAgc2NvcGUubGF1bmNoKGFjdGlvbkRpc3BhdGNoZXIpIHsKICAgICAgICAgICAg
+          ICAgIGRlbGF5KDUwKQogICAgICAgICAgICAgICAgc3RhcnRRdWVyeUpvYihieUZvcmNlZCA9IHRy
+          dWUpCiAgICAgICAgICAgIH0KICAgICAgICB9IiIiLAogICAgKSwKICAgICgKICAgICAgICAicmUt
+          cXVlcnkgYWZ0ZXIgYSBzdWNjZXNzZnVsIGFjdGlvbjogMzAwbXMgLT4gNTBtcyIsCiAgICAgICAg
+          IiIiICAgICAgICAgICAgICAgIHJ1bGUudHJpZ2dlcigpCiAgICAgICAgICAgICAgICBzY29wZS5s
+          YXVuY2goYWN0aW9uRGlzcGF0Y2hlcikgewogICAgICAgICAgICAgICAgICAgIGRlbGF5KDMwMCkK
+          ICAgICAgICAgICAgICAgICAgICBzdGFydFF1ZXJ5Sm9iKCkKICAgICAgICAgICAgICAgIH0iIiIs
+          CiAgICAgICAgIiIiICAgICAgICAgICAgICAgIHJ1bGUudHJpZ2dlcigpCiAgICAgICAgICAgICAg
+          ICBzY29wZS5sYXVuY2goYWN0aW9uRGlzcGF0Y2hlcikgewogICAgICAgICAgICAgICAgICAgIGRl
+          bGF5KDUwKQogICAgICAgICAgICAgICAgICAgIHN0YXJ0UXVlcnlKb2IoKQogICAgICAgICAgICAg
+          ICAgfSIiIiwKICAgICksCiAgICAoCiAgICAgICAgInJlLXF1ZXJ5IGFmdGVyIGFuIGFwcElkIGNv
+          cnJlY3Rpb246IDMwMG1zIC0+IDUwbXMiLAogICAgICAgICIiIiAgICAgICAgc2NvcGUubGF1bmNo
+          KGFjdGlvbkRpc3BhdGNoZXIpIHsKICAgICAgICAgICAgZGVsYXkoMzAwKQogICAgICAgICAgICBz
+          dGFydFF1ZXJ5Sm9iKCkKICAgICAgICB9CiAgICB9IiIiLAogICAgICAgICIiIiAgICAgICAgc2Nv
+          cGUubGF1bmNoKGFjdGlvbkRpc3BhdGNoZXIpIHsKICAgICAgICAgICAgZGVsYXkoNTApCiAgICAg
+          ICAgICAgIHN0YXJ0UXVlcnlKb2IoKQogICAgICAgIH0KICAgIH0iIiIsCiAgICApLAogICAgKAog
+          ICAgICAgICJzdGVhZHktc3RhdGUgY29udGVudC1ldmVudCB0aHJvdHRsZTogMTAwbXMgLT4gMzBt
+          cyIsCiAgICAgICAgIiIiICAgICAgICAgICAgaWYgKGExMXlFdmVudC50aW1lIC0gbGFzdENvbnRl
+          bnRFdmVudFRpbWUgPCAxMDAgJiYgYTExeUV2ZW50LnRpbWUgLSBhcHBDaGFuZ2VUaW1lID4gNTAw
+          MCAmJiBhMTF5RXZlbnQudGltZSAtIGxhc3RUcmlnZ2VyVGltZSA+IDMwMDApIHsiIiIsCiAgICAg
+          ICAgIiIiICAgICAgICAgICAgaWYgKGExMXlFdmVudC50aW1lIC0gbGFzdENvbnRlbnRFdmVudFRp
+          bWUgPCAzMCAmJiBhMTF5RXZlbnQudGltZSAtIGFwcENoYW5nZVRpbWUgPiA1MDAwICYmIGExMXlF
+          dmVudC50aW1lIC0gbGFzdFRyaWdnZXJUaW1lID4gMzAwMCkgeyIiIiwKICAgICksCl0KCgpkZWYg
+          YXBwbHkodGV4dCwgY3JsZj1GYWxzZSk6CiAgICBmb3IgZGVzYywgb2xkLCBuZXcgaW4gRURJVFM6
+          CiAgICAgICAgbywgbiA9IG9sZCwgbmV3CiAgICAgICAgaWYgY3JsZjoKICAgICAgICAgICAgbyA9
+          IG8ucmVwbGFjZSgiXG4iLCAiXHJcbiIpCiAgICAgICAgICAgIG4gPSBuLnJlcGxhY2UoIlxuIiwg
+          IlxyXG4iKQogICAgICAgIGNvdW50ID0gdGV4dC5jb3VudChvKQogICAgICAgIGlmIGNvdW50ICE9
+          IDE6CiAgICAgICAgICAgIHJhaXNlIFN5c3RlbUV4aXQoCiAgICAgICAgICAgICAgICAiRVJST1I6
+          IFslc10gbWF0Y2hlZCAlZCB0aW1lcyAoZXhwZWN0ZWQgMSkuICIKICAgICAgICAgICAgICAgICJT
+          b3VyY2UgY2hhbmdlZD8gQWJvcnRpbmcsIG5vdGhpbmcgd3JpdHRlbi4iICUgKGRlc2MsIGNvdW50
+          KQogICAgICAgICAgICApCiAgICAgICAgdGV4dCA9IHRleHQucmVwbGFjZShvLCBuKQogICAgICAg
+          IHByaW50KCJvazogJXMiICUgZGVzYykKICAgIHJldHVybiB0ZXh0CgoKZGVmIG1haW4oKToKICAg
+          IGlmIGxlbihzeXMuYXJndikgIT0gMjoKICAgICAgICByYWlzZSBTeXN0ZW1FeGl0KF9fZG9jX18p
+          CiAgICBwYXRoID0gc3lzLmFyZ3ZbMV0KICAgIHdpdGggb3BlbihwYXRoLCAicmIiKSBhcyBmOgog
+          ICAgICAgIHJhdyA9IGYucmVhZCgpCiAgICB0ZXh0ID0gcmF3LmRlY29kZSgidXRmLTgiKQogICAg
+          dHJ5OgogICAgICAgIG5ld190ZXh0ID0gYXBwbHkodGV4dCwgY3JsZj1GYWxzZSkKICAgIGV4Y2Vw
+          dCBTeXN0ZW1FeGl0OgogICAgICAgIGlmICJcclxuIiBub3QgaW4gdGV4dDoKICAgICAgICAgICAg
+          cmFpc2UKICAgICAgICBuZXdfdGV4dCA9IGFwcGx5KHRleHQsIGNybGY9VHJ1ZSkKICAgIHNodXRp
+          bC5jb3B5ZmlsZShwYXRoLCBwYXRoICsgIi5iYWsiKQogICAgd2l0aCBvcGVuKHBhdGgsICJ3YiIp
+          IGFzIGY6CiAgICAgICAgZi53cml0ZShuZXdfdGV4dC5lbmNvZGUoInV0Zi04IikpCiAgICBwcmlu
+          dCgid3JpdHRlbjogJXMgKGJhY2t1cDogJXMuYmFrKSIgJSAocGF0aCwgcGF0aCkpCgoKaWYgX19u
+          YW1lX18gPT0gIl9fbWFpbl9fIjoKICAgIG1haW4oKQo=
+          B64
+          python3 /tmp/apply_fast_skip.py gkd-src/app/src/main/kotlin/li/songe/gkd/a11y/A11yRuleEngine.kt
 
-      # 5) 签名：有 secret 就用你的固定 keystore，没有就临时生成一把并上传
       - name: Prepare signing key
         id: key
         env:
@@ -84,15 +157,13 @@ jobs:
             echo "GKD_RENAME_APK_FLAG=1"
           } >> gkd-src/gradle.properties
 
-      # 6) 构建
       - name: Build release APK
         run: |
           set -e
           cd gkd-src
           chmod +x gradlew
-          ./gradlew app:assembleGkdRelease --no-daemon
+          ./gradlew app:assembleGkdRelease --no-daemon --stacktrace
 
-      # 7) 上传 APK（以及首次生成的 keystore，务必保存好）
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
